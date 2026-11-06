@@ -1,0 +1,332 @@
+{% extends "base.html" %}
+{% block title %}Settings{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Settings</h1>
+    <p>Saved to <code>/data/settings.json</code>. Every option is explained beside it; the <a href="/guide">Guide</a> has the full walkthrough.</p>
+  </div>
+</div>
+
+<form method="post" action="/settings" id="settings-form" autocomplete="off">
+
+<!-- ======================= PLEX CONNECTION ======================= -->
+<fieldset id="plex">
+  <legend>Plex connection</legend>
+  <div class="field">
+    <label for="plex_url">Plex URL</label>
+    <input type="url" id="plex_url" name="plex_url" value="{{ s.plex_url }}" required placeholder="http://192.168.1.10:32400">
+    <p class="help">Where this app reaches your Plex server: <code>http://</code> + your server's LAN IP + <code>:32400</code>,
+      e.g. <code>http://192.168.1.10:32400</code>. No trailing slash.</p>
+    <details class="more"><summary>IP address or container name?</summary><div>
+      <p><strong>IP address (recommended):</strong> e.g. <code>http://192.168.1.10:32400</code>, the LAN IP of the machine running
+        Plex and Plex's port. Works from any Docker network, as long as Plex publishes port 32400 on the host (or runs with
+        <code>network_mode: host</code>), and also works if Plex isn't in Docker at all.</p>
+      <p><strong>Container name:</strong> <code>http://plex:32400</code>. Only works when this app's container and the Plex container
+        share a Docker network (both list the same network under <code>networks:</code> in compose). Use the Plex
+        service's <code>container_name</code>. Traffic then stays inside Docker and survives a host IP change.</p>
+      <p>Avoid a public address like <code>https://plex.example.com</code> here: local is faster and doesn't depend on DNS or a reverse proxy.</p>
+    </div></details>
+  </div>
+  <div class="field">
+    <label for="plex_token">Plex token</label>
+    <input type="password" id="plex_token" name="plex_token" value="" placeholder="{{ 'Saved, leave blank to keep it' if s.plex_token else 'Paste your X-Plex-Token' }}">
+    <p class="help">Lets the app act as you (the server owner) in Plex. Stored in plain text in <code>/data/settings.json</code>,
+      so keep that folder private. Leave blank to keep the saved one.</p>
+    <details class="more"><summary>How do I find my token?</summary><div>
+      <ol>
+        <li>Open Plex Web and sign in as the server owner.</li>
+        <li>Open any movie → <strong>⋮ (More)</strong> → <strong>Get Info</strong> → <strong>View XML</strong>.</li>
+        <li>A new tab opens. In its address bar, copy everything after <code>X-Plex-Token=</code> (up to the end, or the next <code>&amp;</code>).</li>
+      </ol>
+      The token stays valid until you sign out of all devices or change your Plex password.
+      Also in <a href="/guide#plex-connect">Guide → Plex setup</a>.
+    </div></details>
+  </div>
+  <div class="field">
+    <label class="check"><input type="checkbox" name="plex_verify_ssl" {{ 'checked' if s.plex_verify_ssl }}> Verify SSL certificate</label>
+    <p class="help">Only matters if the Plex URL starts with <code>https://</code>. Untick it if Plex uses its own self-signed certificate,
+      or simply use <code>http://</code> on your LAN.</p>
+  </div>
+  <div class="row">
+    <button type="button" class="btn" id="test-plex">Test connection &amp; load libraries</button>
+    <span id="plex-result" class="small"></span>
+  </div>
+</fieldset>
+
+<!-- ======================= LIBRARY & FOLDERS ======================= -->
+<fieldset id="library">
+  <legend>Plex library &amp; folders</legend>
+  <div class="field">
+    <label for="section_key">Library</label>
+    <select id="section_key" name="section_key">
+      <option value="" data-locations="[]">— choose a library —</option>
+      {% for sec in sections %}
+      <option value="{{ sec.key }}" data-locations='{{ sec.locations|tojson }}' {{ 'selected' if sec.key|string == s.section_key|string }}>{{ sec.title }}{% if sec.kind != 'Movies' %} · {{ sec.kind }}{% endif %} ({{ sec.locations|join(", ") }})</option>
+      {% endfor %}
+      {% if s.section_key and not sections %}<option value="{{ s.section_key }}" data-locations="[]" selected>Library key {{ s.section_key }} (Plex not reachable right now)</option>{% endif %}
+    </select>
+    {% if sections_error %}<p class="help" style="color:var(--warn)">Couldn't load libraries: {{ sections_error }}</p>{% endif %}
+    <p class="help">Where the notice appears: it shows first in that library's "Recently Added" row on everyone's Home screen.
+      Movies and Other Videos libraries are listed (TV and Music libraries aren't supported). The folders in brackets are
+      how Plex sees them. Press <em>Test connection</em> above to refresh this list.</p>
+  </div>
+
+  <div class="field">
+    <label for="notice_folder_name">Notice folder name <span class="opt">usually leave blank</span></label>
+    <input type="text" id="notice_folder_name" name="notice_folder_name" value="{{ s.notice_folder_name }}"
+           placeholder="{{ detected_name or '_ServerNotice' }}" data-detected="{{ detected_name or '_ServerNotice' }}">
+    {% if detected_name %}
+    <p class="help">Detected from your compose file: <code>{{ detected_name }}</code>. Leave this blank to use it.</p>
+    {% else %}
+    <p class="help" style="color:var(--warn)">Couldn't detect it automatically, so <code>_ServerNotice</code> is assumed. If your
+      folder has another name, type it here.</p>
+    {% endif %}
+    <p class="help">The name of the folder you mounted at <code>/notice</code>: the last part of the left-hand side of that compose
+      line. In <code>/path/to/movies/_ServerNotice:/notice</code> it's <code>_ServerNotice</code>. That folder must sit
+      <strong>directly inside</strong> the library's folder.</p>
+  </div>
+
+  <div class="field">
+    <span class="label">Plex will look for notices in</span>
+    <div id="plex-path-preview" class="card" style="padding:10px 12px;background:var(--panel-2)">
+      <code>—</code>
+    </div>
+    {% if legacy_path and not s.plex_path_override %}
+    <p class="help" style="color:var(--warn)">Your earlier setting <code>{{ legacy_path }}</code> is still in use until you press
+      <em>Save settings</em>. After that, the path above is used.</p>
+    {% endif %}
+    <p class="help">Worked out for you: each of the library's folders + the notice folder name. If activation ever says Plex didn't
+      add the clip, the folder mounted at <code>/notice</code> isn't actually at this location.</p>
+    <details class="more"><summary>Examples</summary><div>
+      <table class="list small">
+        <tr><th>This app's compose line</th><th>Library folder (as Plex shows it)</th><th>Plex looks in</th></tr>
+        <tr><td><code>/path/to/movies/_ServerNotice:/notice</code></td><td><code>/movies</code></td><td><code>/movies/_ServerNotice</code></td></tr>
+        <tr><td><code>/mnt/user/media/movies/_ServerNotice:/notice</code></td><td><code>/media/movies</code></td><td><code>/media/movies/_ServerNotice</code></td></tr>
+        <tr><td><code>/volume1/video/Home Videos/_Notices:/notice</code></td><td><code>/data/home-videos</code></td><td><code>/data/home-videos/_Notices</code></td></tr>
+      </table>
+      <p style="margin-top:8px">Only the folder name has to match. The host path and Plex's path can look completely different, because
+        each container names the library its own way. More layouts are in <a href="/guide#layouts">Guide → Library in a different place</a>.</p>
+    </div></details>
+  </div>
+
+  <details class="more" style="margin:-6px 0 18px" {{ 'open' if s.plex_path_override }}>
+    <summary>Advanced: custom Plex path</summary>
+    <div>
+      <div class="field" style="margin-bottom:6px">
+        <label for="plex_path_override">Custom Plex path <span class="opt">optional</span></label>
+        <input type="text" id="plex_path_override" name="plex_path_override" value="{{ s.plex_path_override }}" placeholder="/movies/some/deeper/_ServerNotice">
+      </div>
+      <p>Only needed if your notice folder is <em>not</em> directly inside the library's folder, e.g. it's at
+        <code>/movies/4K/_ServerNotice</code> as Plex sees it. Type the full path Plex sees; it must still be inside the library.
+        When this is filled in, the folder name and the automatic path above are ignored.</p>
+    </div>
+  </details>
+
+  <div class="field">
+    <label>Notice folder (inside this container)</label>
+    <input type="text" value="{{ notice_dir }}" readonly>
+    <p class="help">Where the app writes clips while a notice is live. To use a different host folder, change the
+      <code>/notice</code> volume in your compose file. The app only ever writes inside this folder, never anywhere else in
+      your library.</p>
+  </div>
+</fieldset>
+
+<!-- ======================= BEHAVIOUR ======================= -->
+<fieldset id="behaviour">
+  <legend>Notice behaviour</legend>
+  <div class="field">
+    <label for="pin_date">Pinned "added" date</label>
+    <input type="date" id="pin_date" name="pin_date" value="{{ s.pin_date }}" max="2037-12-31" required>
+    <p class="help">The fake "date added" that keeps the notice at the front of Recently Added (Plex sorts that row newest-first,
+      so a date in the future always wins). Default <code>2037-01-01</code>.</p>
+    <details class="more"><summary>Why not 2099?</summary><div>
+      Dates after 19 January 2038 don't fit in the 32-bit timestamps some software still uses. A client like that could
+      read 2099 as a date in 1900-something and push the notice to the <em>bottom</em>. Anything in 2037 is safe.
+    </div></details>
+  </div>
+  <div class="field">
+    <label class="check"><input type="checkbox" name="pin_release_date" {{ 'checked' if s.pin_release_date }}> Also put it first in "Recently Released"</label>
+    <p class="help">Gives the notice the same future date as its <strong>release date</strong>, so it also leads the
+      "Recently Released Movies" row, which is sorted by release date rather than date added.</p>
+  </div>
+  <div class="field">
+    <label class="check"><input type="checkbox" name="sort_to_top" {{ 'checked' if s.sort_to_top }}> Sort to the top of the A–Z list too</label>
+    <p class="help">Gives the notice a hidden sort title starting with <code>!</code>, so it's also first when someone browses
+      the Movies library alphabetically. The visible title is unchanged.</p>
+  </div>
+  <div class="field">
+    <label for="watchdog_minutes">Watchdog check interval (minutes)</label>
+    <input type="number" id="watchdog_minutes" name="watchdog_minutes" value="{{ s.watchdog_minutes }}" min="0" max="1440" required>
+    <p class="help">How often the app checks the live notice is still pinned and titled correctly in Plex, and fixes it if not
+      (e.g. after someone hits "Refresh metadata"). <code>0</code> turns the check off. Default 10.
+      Scheduled auto-removal runs every 30 seconds regardless of this setting.</p>
+  </div>
+  <div class="field">
+    <label for="scan_timeout_seconds">Scan timeout (seconds)</label>
+    <input type="number" id="scan_timeout_seconds" name="scan_timeout_seconds" value="{{ s.scan_timeout_seconds }}" min="20" max="900" required>
+    <p class="help">How long to wait for Plex to pick up the clip after activation before giving up and rolling back.
+      Only the notice folder is scanned, so it's usually under 10 seconds. Raise it if your mergerfs disks spin down
+      and take a while to wake. Default 120.</p>
+  </div>
+  <div class="field">
+    <label class="check"><input type="checkbox" name="empty_trash_fallback" {{ 'checked' if s.empty_trash_fallback }}>
+      If Plex won't delete a notice, empty the Movies library trash instead</label>
+    <p class="help" style="color:var(--warn)">Leave this off unless you understand it. The normal, safe way to remove a notice is
+      Plex's own delete, which needs <em>Allow media deletion</em> turned on in Plex (Settings → Library).</p>
+    <details class="more"><summary>Why is this risky with mergerfs?</summary><div>
+      "Empty trash" removes <strong>every</strong> unavailable item in the whole Movies library, not just the notice. If a disk
+      in your mergerfs pool is offline or slow to mount, its movies show as unavailable, and emptying the trash would delete
+      their Plex entries. When the disk returns they'd be re-added as brand-new, flooding Recently Added and losing their
+      custom posters and edits. With this off, a notice Plex won't delete is just hidden (dated 2000) and retried later.
+    </div></details>
+  </div>
+</fieldset>
+
+<!-- ======================= CLOUDFLARE ======================= -->
+<fieldset id="cloudflare">
+  <legend>Cloudflare status page <span class="opt">optional</span></legend>
+  <p class="help" style="margin:0 0 14px">Sends messages to the Cloudflare Worker that shows a maintenance page on a site like
+    <code>requests.example.com</code> when your server is unreachable. Needs the Worker, a KV namespace and an API token:
+    set those up first with <a href="/guide#cloudflare">Guide → Cloudflare status page</a>.</p>
+  <div class="field">
+    <label class="check"><input type="checkbox" name="cf_enabled" {{ 'checked' if s.cf_enabled }}> Enable Cloudflare status-page messages</label>
+  </div>
+  <div class="field">
+    <label for="cf_account_id">Account ID</label>
+    <input type="text" id="cf_account_id" name="cf_account_id" value="{{ s.cf_account_id }}" placeholder="32 characters">
+    <p class="help">The long ID in your Cloudflare dashboard's address bar, right after <code>dash.cloudflare.com/</code>.
+      See <a href="/guide#cf-account">Guide → Account ID</a>.</p>
+  </div>
+  <div class="field">
+    <label for="cf_namespace_id">KV namespace ID</label>
+    <input type="text" id="cf_namespace_id" name="cf_namespace_id" value="{{ s.cf_namespace_id }}" placeholder="32 characters">
+    <p class="help">The ID of the KV namespace your Worker reads (e.g. <code>plex-notices</code>): open it in Cloudflare →
+      <strong>Metrics</strong> tab → <strong>Namespace ID</strong> box on the right.
+      See <a href="/guide#cf-kv">Guide → Step 1: KV namespace</a>.</p>
+  </div>
+  <div class="field">
+    <label for="cf_api_token">API token</label>
+    <input type="password" id="cf_api_token" name="cf_api_token" value="" placeholder="{{ 'Saved, leave blank to keep it' if s.cf_api_token else 'Paste the token' }}">
+    <p class="help">Create one by following <a href="/guide#cf-token">Guide → Step 2: API token</a>. Leave blank to keep the saved one.</p>
+  </div>
+  <div class="field">
+    <label for="cf_expiry_hours">Planned message lifetime (hours)</label>
+    <input type="number" id="cf_expiry_hours" name="cf_expiry_hours" value="{{ s.cf_expiry_hours }}" min="1" max="720" required>
+    <p class="help">When a notice is activated <em>without</em> an auto-remove time, its planned status message expires after this
+      many hours. With an auto-remove time it expires one hour after that time instead. Either way it's also cleared when
+      you remove the notice. Default 24.</p>
+  </div>
+  <div class="field">
+    <label for="cf_default_title">Default heading (unexpected outages)</label>
+    <input type="text" id="cf_default_title" name="cf_default_title" value="{{ s.cf_default_title }}" maxlength="120">
+  </div>
+  <div class="field">
+    <label for="cf_default_message">Default message (unexpected outages)</label>
+    <textarea id="cf_default_message" name="cf_default_message" rows="3">{{ s.cf_default_message }}</textarea>
+    <p class="help">What the status page says when the server is down and <strong>no</strong> planned message is active.
+      It's sent to Cloudflare automatically when you save settings with Cloudflare enabled and this text changed. Use
+      <em>Send default to Cloudflare</em> to send it again at any time (it uses what's typed, even before saving).</p>
+  </div>
+  <div class="row">
+    <button type="button" class="btn" id="test-cf">Test Cloudflare</button>
+    <button type="button" class="btn" id="push-default">Send default to Cloudflare</button>
+    <span id="cf-result" class="small"></span>
+  </div>
+</fieldset>
+
+<!-- ======================= SECURITY ======================= -->
+<fieldset id="security">
+  <legend>Security</legend>
+  {% if disable_auth %}
+  <div class="banner banner-warn"><strong>DISABLE_AUTH is set in the compose file</strong>, so the password is bypassed. Set a new
+    password below if needed, then remove <code>DISABLE_AUTH</code> and restart the container.</div>
+  {% endif %}
+  <div class="field">
+    <label class="check"><input type="checkbox" name="auth_enabled" id="auth_enabled" {{ 'checked' if s.auth_enabled }}> Require a password</label>
+    <p class="help">Optional. Without a password, anyone who can reach this page can post notices to your Plex users, so keep it
+      LAN/VPN-only: a reverse-proxy address such as <code>notices.example.com</code> restricted to your LAN, or just
+      <code>http://&lt;server-ip&gt;:{{ port }}</code>. Turn this on if anyone else on your network shouldn't be able to use it.</p>
+  </div>
+  <div class="row">
+    <div class="field grow">
+      <label for="new_password">{{ "New password" if has_password else "Password" }} <span class="opt">{{ "leave blank to keep the current one" if has_password else "" }}</span></label>
+      <input type="password" id="new_password" name="new_password" autocomplete="new-password">
+    </div>
+    <div class="field grow">
+      <label for="confirm_password">Confirm password</label>
+      <input type="password" id="confirm_password" name="confirm_password" autocomplete="new-password">
+    </div>
+  </div>
+  <details class="more"><summary>Forgot the password?</summary><div>
+    Add <code>DISABLE_AUTH=true</code> under <code>environment:</code> for this app in your compose file and run
+    <code>docker compose up -d</code>. The app opens without a password; set a new one here, then remove that line and run
+    <code>docker compose up -d</code> again.
+  </div></details>
+</fieldset>
+
+<div class="row" style="position:sticky;bottom:12px;background:var(--bg);padding:10px 0">
+  <button class="btn btn-primary">Save settings</button>
+  <span class="muted small">Test buttons use what's typed above, even before saving.</span>
+</div>
+</form>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const form = document.getElementById("settings-form");
+
+async function postForm(url, out) {
+  out.innerHTML = '<span class="spinner"></span>';
+  try {
+    const r = await fetch(url, { method: "POST", body: new FormData(form) });
+    const js = await r.json();
+    out.innerHTML = `<span style="color:var(${js.ok ? "--ok" : "--fail"})">${escapeHtml(js.message)}</span>`;
+    return js;
+  } catch {
+    out.innerHTML = '<span style="color:var(--fail)">Request failed.</span>';
+    return null;
+  }
+}
+
+document.getElementById("test-plex").addEventListener("click", async () => {
+  const js = await postForm("/settings/test-plex", document.getElementById("plex-result"));
+  if (js && js.ok && js.sections) {
+    const sel = document.getElementById("section_key");
+    const current = sel.value;
+    sel.innerHTML = '<option value="" data-locations="[]">— choose a library —</option>' + js.sections.map((s) =>
+      `<option value="${escapeHtml(s.key)}" data-locations='${escapeHtml(JSON.stringify(s.locations))}' ${String(s.key) === current ? "selected" : ""}>${escapeHtml(s.title)}${s.kind !== "Movies" ? " · " + escapeHtml(s.kind) : ""} (${escapeHtml(s.locations.join(", "))})</option>`
+    ).join("");
+    if (!sel.value && js.sections.length === 1) sel.value = js.sections[0].key;
+    updatePreview();
+  }
+});
+
+function updatePreview() {
+  const box = document.getElementById("plex-path-preview");
+  const override = document.getElementById("plex_path_override").value.trim().replace(/\/+$/, "");
+  const nameInput = document.getElementById("notice_folder_name");
+  const name = nameInput.value.trim().replace(/^\/+|\/+$/g, "") || nameInput.dataset.detected;
+  if (override) {
+    box.innerHTML = `<code>${escapeHtml(override)}</code> <span class="muted small">(custom path)</span>`;
+    return;
+  }
+  const opt = document.getElementById("section_key").selectedOptions[0];
+  let locs = [];
+  try { locs = JSON.parse(opt ? opt.dataset.locations || "[]" : "[]"); } catch {}
+  if (!locs.length) {
+    box.innerHTML = '<span class="muted small">Choose a library above (press <em>Test connection</em> if the list is empty).</span>';
+    return;
+  }
+  box.innerHTML = locs.map((l) => `<code>${escapeHtml(l.replace(/\/+$/, "") + "/" + name)}</code>`).join(' <span class="muted small">or</span> ');
+}
+["section_key", "notice_folder_name", "plex_path_override"].forEach((id) =>
+  document.getElementById(id).addEventListener("input", updatePreview));
+document.getElementById("section_key").addEventListener("change", updatePreview);
+updatePreview();
+document.getElementById("test-cf").addEventListener("click", () =>
+  postForm("/settings/test-cloudflare", document.getElementById("cf-result")));
+document.getElementById("push-default").addEventListener("click", () =>
+  postForm("/settings/push-default", document.getElementById("cf-result")));
+</script>
+{% endblock %}

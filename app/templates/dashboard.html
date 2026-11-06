@@ -1,0 +1,207 @@
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Dashboard</h1>
+    <p>Put a notice at the front of Plex's Recently Added, or take it down again.</p>
+  </div>
+</div>
+
+<div class="grid cols-2">
+  <div>
+    <!-- Current notice -->
+    <div class="card">
+      <div class="card-head">
+        <h2>Current notice</h2>
+        {% if active %}<span class="pill pill-live">Live in Plex</span>{% else %}<span class="pill pill-off">Nothing active</span>{% endif %}
+      </div>
+      {% if active %}
+      <div class="active-notice">
+        {% if has_active_poster %}<img src="/posters/active.jpg?t={{ active.activated_at|int }}" alt="Active poster">{% endif %}
+        <div>
+          <div style="font-size:17px;font-weight:700">{{ active.title }}</div>
+          <dl class="kv small">
+            <dt>Preset</dt><dd>{{ active.preset_name }}</dd>
+            <dt>Clip</dt><dd>{{ active.clip_name }}</dd>
+            <dt>Live since</dt><dd>{{ active.activated_at|ts }}</dd>
+            <dt>Auto-remove</dt><dd>{{ active.auto_remove_at|ts if active.auto_remove_at else "Off (stays until you remove it)" }}</dd>
+            <dt>Status page</dt><dd>{% if not cf_enabled %}Cloudflare not enabled{% elif active.cf_planned %}Planned message is set{% else %}Default message{% endif %}</dd>
+            <dt>Plex item</dt><dd><code>{{ active.rating_key }}</code></dd>
+            <dt>Last check</dt><dd>{{ last_watchdog|ts if last_watchdog else "Not yet" }}{% if watchdog_note %} · <span class="{{ 'muted' if watchdog_note == 'OK' else '' }}" style="{{ '' if watchdog_note == 'OK' else 'color:var(--warn)' }}">{{ watchdog_note }}</span>{% endif %}</dd>
+          </dl>
+          <form method="post" action="/deactivate" data-confirm="Remove this notice from Plex now?">
+            <button class="btn btn-danger" {{ 'disabled' if busy }}>Remove notice</button>
+          </form>
+          <details class="more" style="margin-top:12px">
+            <summary>Change auto-remove time</summary>
+            <div>
+              <form method="post" action="/active/auto-remove">
+                <input type="datetime-local" name="auto_remove" min="{{ now_local }}" value="{{ active.auto_remove_local }}">
+                <p class="help">Leave empty to keep the notice until you remove it. If a planned status-page
+                  message is set, its expiry is updated too.</p>
+                <button class="btn btn-small">Save time</button>
+              </form>
+            </div>
+          </details>
+          <details class="more">
+            <summary>Plex lost track of it?</summary>
+            <div>
+              <p>If the item was deleted in Plex by hand, or Plex is gone for good, "Forget" clears it from this
+                app without talking to Plex. The clip file is removed and the Plex item (if it still exists) is
+                queued for automatic cleanup.</p>
+              <form method="post" action="/forget" data-confirm="Forget the active notice without asking Plex?">
+                <button class="btn btn-small" {{ 'disabled' if busy }}>Forget notice</button>
+              </form>
+            </div>
+          </details>
+        </div>
+      </div>
+      {% else %}
+      <p class="muted">Pick a preset below and press <strong>Activate</strong>. It'll appear first in "Recently Added in Movies" for everyone.</p>
+      {% endif %}
+    </div>
+
+    <!-- Activate -->
+    <div class="card">
+      <h2>{{ "Switch to another notice" if active else "Activate a notice" }}</h2>
+      {% if not presets %}
+        <p class="muted">You don't have any presets yet. <a href="/presets/new">Create one</a> first.</p>
+      {% else %}
+      <form method="post" action="/activate" {% if active %}data-confirm="This replaces the notice that's live now. Continue?"{% endif %}>
+        <div class="field">
+          <label for="preset_id">Preset</label>
+          <select id="preset_id" name="preset_id" required>
+            {% for p in presets %}
+            <option value="{{ p.id }}" data-status="{{ 1 if (p.status_message or p.status_title) else 0 }}" data-clip="{{ 1 if p.clip_ok else 0 }}">{{ p.name }}{% if not p.clip_ok %} (no clip!){% endif %}</option>
+            {% endfor %}
+          </select>
+          <p class="help">The preset decides the title, description, poster and clip. Edit them on the <a href="/presets">Presets</a> page.</p>
+        </div>
+        <div class="field">
+          <label for="auto_remove">Remove automatically at <span class="opt">optional</span></label>
+          <input type="datetime-local" id="auto_remove" name="auto_remove" min="{{ now_local }}">
+          <p class="help">When this time passes, the notice is removed for you. Handy for "back by 3pm" outages.
+            If the server is off at that time, it's removed as soon as the app is running again.
+            Leave empty to keep it until you press <em>Remove notice</em>.</p>
+        </div>
+        <div class="field">
+          <label class="check"><input type="checkbox" name="push_status" id="push_status" {{ 'checked' if cf_enabled else 'disabled' }}>
+            Also set this preset's message on the Cloudflare status page</label>
+          <p class="help" id="push_help">
+            {% if cf_enabled %}
+            While the notice is active, visitors to your status page see the preset's status message if your server goes
+            offline. If the preset has no status message, or this is unticked, the default "unexpected outage" message is used.
+            {% else %}
+            Cloudflare isn't set up, so this does nothing. It's optional; see <a href="/guide#cloudflare">Guide → Cloudflare status page</a>.
+            {% endif %}
+          </p>
+        </div>
+        <button class="btn btn-primary" {{ 'disabled' if busy }}>{{ "Switch notice" if active else "Activate" }}</button>
+      </form>
+      {% endif %}
+    </div>
+
+    {% if leftovers %}
+    <div class="card">
+      <div class="card-head"><h2>Leftovers waiting for cleanup</h2><span class="pill pill-warn">{{ leftovers|length }}</span></div>
+      <p class="muted small">Plex refused to delete {{ leftovers|length }} old notice item(s), usually because
+        <em>Allow media deletion</em> is off (Plex Web → Settings → Library). They're dated 2000, so they don't show in
+        Recently Added, but they appear as "unavailable" in the Movies library. Turn that setting on and press retry.</p>
+      <form method="post" action="/cleanup"><button class="btn btn-small" {{ 'disabled' if busy }}>Retry cleanup</button></form>
+    </div>
+    {% endif %}
+  </div>
+
+  <div>
+    <!-- Job progress -->
+    <div class="card" id="job-card" {% if not job %}style="display:none"{% endif %}>
+      <div class="card-head">
+        <h2 id="job-label">{{ job.label if job else "" }}</h2>
+        <span id="job-status">
+          {% if job and job.status == 'running' %}<span class="spinner"></span>
+          {% elif job and job.status == 'failed' %}<span class="pill pill-fail">Failed</span>
+          {% elif job %}<span class="pill pill-ok">Done</span>{% endif %}
+        </span>
+      </div>
+      <ul class="steps" id="job-steps">
+        {% if job %}{% for st in job.steps %}<li class="{{ st.level }}">{{ st.msg }}</li>{% endfor %}{% endif %}
+      </ul>
+    </div>
+
+    <!-- Setup checks -->
+    <div class="card">
+      <div class="card-head">
+        <h2>Setup checks</h2>
+        <button class="btn btn-small" id="run-checks">Run checks</button>
+      </div>
+      <ul class="checks" id="checks"><li><span></span><span class="muted">Press <strong>Run checks</strong> to test Plex, the folders and Cloudflare.</span></li></ul>
+    </div>
+
+    <!-- Log -->
+    <div class="card">
+      <h2>Activity</h2>
+      <ul class="log" id="log">
+        {% for e in log %}
+        <li><span class="t">{{ e.t|ts_short }}</span><span class="{{ e.level }}">{{ e.msg }}</span></li>
+        {% else %}
+        <li><span></span><span class="muted">Nothing yet.</span></li>
+        {% endfor %}
+      </ul>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const busyAtLoad = {{ 'true' if busy else 'false' }};
+async function poll() {
+  try {
+    const r = await fetch("/api/status");
+    if (!r.ok) return;
+    const s = await r.json();
+    const card = document.getElementById("job-card");
+    if (s.job) {
+      card.style.display = "";
+      document.getElementById("job-label").textContent = s.job.label;
+      document.getElementById("job-steps").innerHTML = s.job.steps
+        .map((st) => `<li class="${escapeHtml(st.level)}">${escapeHtml(st.msg)}</li>`).join("");
+      document.getElementById("job-status").innerHTML =
+        s.job.status === "running" ? '<span class="spinner"></span>' :
+        s.job.status === "failed" ? '<span class="pill pill-fail">Failed</span>' : '<span class="pill pill-ok">Done</span>';
+    }
+    if (s.busy) setTimeout(poll, 2000);
+    else if (busyAtLoad) location.replace("/");
+  } catch { setTimeout(poll, 4000); }
+}
+if (busyAtLoad) setTimeout(poll, 1500);
+
+document.getElementById("run-checks").addEventListener("click", async (e) => {
+  const btn = e.currentTarget;
+  const list = document.getElementById("checks");
+  btn.disabled = true;
+  list.innerHTML = '<li><span class="spinner"></span><span class="muted">Checking…</span></li>';
+  try {
+    const r = await fetch("/api/checks");
+    const checks = await r.json();
+    list.innerHTML = checks.map((c) => `
+      <li><span><span class="pill pill-${escapeHtml(c.status)}">${escapeHtml(c.status)}</span></span>
+      <span><strong>${escapeHtml(c.name)}</strong><br><span class="muted small">${escapeHtml(c.detail)}</span>
+      ${c.fix ? `<br><span class="fix">→ ${escapeHtml(c.fix)}</span>` : ""}</span></li>`).join("");
+  } catch {
+    list.innerHTML = '<li><span class="pill pill-fail">error</span><span>Couldn\'t run the checks.</span></li>';
+  }
+  btn.disabled = false;
+});
+
+const sel = document.getElementById("preset_id");
+const push = document.getElementById("push_status");
+function syncPush() {
+  if (!sel || !push || push.disabled) return;
+  const opt = sel.selectedOptions[0];
+  push.checked = opt && opt.dataset.status === "1";
+}
+if (sel) { sel.addEventListener("change", syncPush); syncPush(); }
+</script>
+{% endblock %}

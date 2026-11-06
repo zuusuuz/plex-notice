@@ -1,0 +1,8 @@
+**/__pycache__
+**/*.pyc
+.git
+data
+plex-notice-data
+*.md
+!app/**
+docs

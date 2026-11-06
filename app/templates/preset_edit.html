@@ -1,0 +1,207 @@
+{% extends "base.html" %}
+{% block title %}{{ "Edit preset" if p.id else "New preset" }}{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>{{ "Edit preset" if p.id else "New preset" }}</h1>
+    <p>Everything a notice shows in Plex. The preview on the right updates as you type.</p>
+  </div>
+  <a class="btn" href="/presets">← Back to presets</a>
+</div>
+
+<form method="post" action="/presets/save" id="preset-form">
+<input type="hidden" name="id" value="{{ p.id }}">
+<div class="grid cols-preset">
+  <div>
+    <fieldset>
+      <legend>Basics</legend>
+      <div class="field">
+        <label for="name">Preset name</label>
+        <input type="text" id="name" name="name" value="{{ p.name }}" required maxlength="80" placeholder="e.g. Electrical work">
+        <p class="help">Only shown inside this app, so you can tell presets apart. Your Plex users never see it.</p>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>What Plex shows</legend>
+      <div class="field">
+        <label for="title">Title</label>
+        <input type="text" id="title" name="title" value="{{ p.title }}" required maxlength="120">
+        <p class="help">The "movie" name under the poster in Recently Added and on the item's page, e.g.
+          <code>⚠ Plex Maintenance – Sat 8 Nov</code>. Emoji work in most apps; some older TV apps show them as boxes.</p>
+      </div>
+      <div class="field">
+        <label for="summary">Description</label>
+        <textarea id="summary" name="summary" rows="6" placeholder="What's happening, when, and how long for.">{{ p.summary }}</textarea>
+        <p class="help">The summary people read when they open the item. Put the important bits here: what's happening,
+          the date and time, when it'll be back, and where to check for updates. Line breaks are kept.</p>
+      </div>
+      <div class="field">
+        <label for="tagline">Tagline <span class="opt">optional</span></label>
+        <input type="text" id="tagline" name="tagline" value="{{ p.tagline }}" maxlength="140">
+        <p class="help">A short line some Plex apps (Plex Web, Apple TV, Android TV) show above the description.
+          Leave empty if you don't want one.</p>
+      </div>
+      <div class="field">
+        <label for="clip_id">Placeholder clip</label>
+        <select id="clip_id" name="clip_id">
+          <option value="">— choose a clip —</option>
+          {% for c in clips %}<option value="{{ c.id }}" {{ 'selected' if c.id == p.clip_id }}>{{ c.name }} ({{ c.size|filesize }})</option>{% endfor %}
+        </select>
+        {% if not clips %}<p class="help" style="color:var(--warn)"><strong>No clips uploaded yet.</strong>
+          <a href="/media">Upload one on the Media page</a> first.</p>{% endif %}
+        <p class="help">What plays if someone presses Play on the notice. A short meme clip works great.
+          Clips come from the <a href="/media">Media</a> page (mkv, mp4, mov, avi, webm and more). Required before you can activate.</p>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Poster</legend>
+      <div class="field">
+        <span class="label">Poster style</span>
+        <div class="radio-row">
+          <label><input type="radio" name="poster_mode" value="generated" {{ 'checked' if p.poster_mode != 'image' }}> Generate one with big bold text</label>
+          <label><input type="radio" name="poster_mode" value="image" {{ 'checked' if p.poster_mode == 'image' }}> Use my own image</label>
+        </div>
+        <p class="help">The app also makes a matching wide background ("art") that Plex shows behind the item's page.</p>
+      </div>
+
+      <div id="gen-fields">
+        <div class="field">
+          <label for="headline">Headline (big letters)</label>
+          <input type="text" id="headline" name="headline" value="{{ p.headline }}" maxlength="80">
+          <p class="help">Shown huge in capitals, e.g. <code>PLEX OUTAGE</code>. The size shrinks automatically to fit,
+            so 1–4 short words look best.</p>
+        </div>
+        <div class="field">
+          <label for="kicker">Small label above the headline <span class="opt">optional</span></label>
+          <input type="text" id="kicker" name="kicker" value="{{ p.kicker }}" maxlength="30">
+          <p class="help">Spaced-out capitals under the warning sign, e.g. <code>SERVER NOTICE</code> or <code>HEADS UP</code>.</p>
+        </div>
+        <div class="field">
+          <label for="subline">Line under the headline <span class="opt">optional</span></label>
+          <input type="text" id="subline" name="subline" value="{{ p.subline }}" maxlength="90">
+          <p class="help">Usually the when, e.g. <code>Saturday · 9am – 3pm</code>. Wraps onto two lines if needed.</p>
+        </div>
+        <div class="field">
+          <label for="footer">Footer <span class="opt">optional</span></label>
+          <input type="text" id="footer" name="footer" value="{{ p.footer }}" maxlength="60">
+          <p class="help">Small grey text at the bottom, e.g. <code>Updates: status.example.com</code>.</p>
+        </div>
+        <div class="row">
+          <div class="field grow">
+            <label for="theme">Colour theme</label>
+            <select id="theme" name="theme">
+              {% for key, t in themes.items() %}<option value="{{ key }}" {{ 'selected' if key == p.theme }}>{{ t.label }}</option>{% endfor %}
+            </select>
+          </div>
+          <div class="field grow">
+            <label for="bg_image_id">Background photo <span class="opt">optional</span></label>
+            <select id="bg_image_id" name="bg_image_id">
+              <option value="">None (colour gradient)</option>
+              {% for i in images %}<option value="{{ i.id }}" {{ 'selected' if i.id == p.bg_image_id }}>{{ i.name }}</option>{% endfor %}
+            </select>
+          </div>
+        </div>
+        <p class="help" style="margin-top:-10px;margin-bottom:14px">The theme sets the accent colour (warning sign, stripes, lines).
+          A background photo is darkened and tinted with the theme so the text stays readable.
+          {% if images %}Photos come from the <a href="/media">Media</a> page.
+          {% else %}<strong>No images uploaded yet.</strong> To use a photo, <a href="/media">upload one on the Media page</a> first.{% endif %}</p>
+        <div class="field">
+          <label class="check"><input type="checkbox" name="stripes" {{ 'checked' if p.stripes }}> Hazard stripes along the top and bottom</label>
+        </div>
+      </div>
+
+      <div id="img-fields">
+        <div class="field">
+          <label for="image_id">Poster image</label>
+          <select id="image_id" name="image_id">
+            <option value="">— choose an image —</option>
+            {% for i in images %}<option value="{{ i.id }}" {{ 'selected' if i.id == p.image_id }}>{{ i.name }}</option>{% endfor %}
+          </select>
+          {% if not images %}<p class="help" style="color:var(--warn)"><strong>No images uploaded yet.</strong>
+            <a href="/media">Upload one on the Media page</a> first, then come back and pick it here.</p>{% endif %}
+          <p class="help">Used exactly as uploaded, cropped to a 2:3 poster shape (and to 16:9 for the background).
+            Best results with a 1000×1500 image. Images come from the <a href="/media">Media</a> page.</p>
+        </div>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Status page message (Cloudflare) <span class="opt">optional</span></legend>
+      {% if not cf_enabled %}
+      <p class="help" style="margin:0 0 14px">Cloudflare isn't enabled in Settings, so these are saved but not used yet.
+        See <a href="/guide#cloudflare">Guide → Cloudflare status page</a>.</p>
+      {% endif %}
+      <div class="field">
+        <label for="status_title">Status page heading</label>
+        <input type="text" id="status_title" name="status_title" value="{{ p.status_title }}" maxlength="120"
+               placeholder="{{ default_status_title }}">
+      </div>
+      <div class="field">
+        <label for="status_message">Status page message</label>
+        <textarea id="status_message" name="status_message" rows="3" placeholder="{{ default_status_message }}">{{ p.status_message }}</textarea>
+        <p class="help">Shown on your status page (e.g. requests.example.com) <strong>only if the server goes offline while this
+          notice is active</strong>. When you activate with "Also set this preset's message" ticked, it's sent to Cloudflare
+          before anything goes down. Leave both empty to use the default "unexpected outage" message from Settings.</p>
+        <details class="more"><summary>How long does it stay?</summary><div>
+          If you set an auto-remove time when activating, the message expires one hour after that time. Otherwise it expires
+          after the number of hours set in Settings → Cloudflare (default 24). It's also cleared when you remove the notice.
+          That way an old "electrical work" message can never show up weeks later during an unrelated outage.
+        </div></details>
+      </div>
+    </fieldset>
+
+    <div class="row">
+      <button class="btn btn-primary">Save preset</button>
+      <a class="btn" href="/presets">Cancel</a>
+    </div>
+  </div>
+
+  <div class="preview card">
+    <div class="tabs">
+      <button type="button" class="btn btn-small on" data-kind="poster">Poster</button>
+      <button type="button" class="btn btn-small" data-kind="art">Background art</button>
+    </div>
+    <img id="preview-img" alt="Preview" src="">
+    <p class="help">This is exactly what gets uploaded to Plex. Some apps crop the background art differently.</p>
+  </div>
+</div>
+</form>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const form = document.getElementById("preset-form");
+const img = document.getElementById("preview-img");
+let kind = "poster", timer = null, lastUrl = null;
+
+function syncMode() {
+  const mode = form.querySelector("input[name=poster_mode]:checked").value;
+  document.getElementById("gen-fields").style.display = mode === "generated" ? "" : "none";
+  document.getElementById("img-fields").style.display = mode === "image" ? "" : "none";
+}
+async function refresh() {
+  const fd = new FormData(form);
+  try {
+    const r = await fetch(`/api/preview?kind=${kind}`, { method: "POST", body: fd });
+    if (!r.ok) return;
+    const blob = await r.blob();
+    if (lastUrl) URL.revokeObjectURL(lastUrl);
+    lastUrl = URL.createObjectURL(blob);
+    img.src = lastUrl;
+  } catch {}
+}
+function queue() { clearTimeout(timer); timer = setTimeout(refresh, 350); }
+form.addEventListener("input", queue);
+form.addEventListener("change", () => { syncMode(); queue(); });
+document.querySelectorAll(".tabs button").forEach((b) => b.addEventListener("click", () => {
+  document.querySelectorAll(".tabs button").forEach((x) => x.classList.remove("on"));
+  b.classList.add("on");
+  kind = b.dataset.kind;
+  refresh();
+}));
+syncMode();
+refresh();
+</script>
+{% endblock %}

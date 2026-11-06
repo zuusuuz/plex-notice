@@ -1,0 +1,516 @@
+{% extends "base.html" %}
+{% block title %}Guide{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Guide</h1>
+    <p>Everything about setting up and using {{ app_name }} {{ version }}.</p>
+  </div>
+</div>
+
+<div class="guide">
+<nav>
+  <a href="#overview">How it works</a>
+  <a href="#requirements">Before you start</a>
+  <a href="#install">Installing</a>
+  <a href="#plex">Plex setup</a>
+  <a href="#layouts">Library in a different place</a>
+  <a href="#using">Day-to-day use</a>
+  <a href="#cloudflare">Cloudflare status page</a>
+  <a href="#cf-test">Testing the status page</a>
+  <a href="#troubleshooting">Troubleshooting</a>
+  <a href="#security">Security</a>
+  <a href="#updating">Updating</a>
+  <a href="#reference">Reference</a>
+</nav>
+
+<div>
+<!-- ================================================================ -->
+<section id="overview" class="card">
+  <h2>How it works</h2>
+  <p class="note"><strong>About the examples in this guide:</strong> replace these placeholders with your own values.<br>
+    <code>/path/to/movies</code> is your Movies folder on the host ·
+    <code>/path/to/compose</code> is the folder holding your <code>compose.yml</code> ·
+    <code>192.168.1.10</code> is your server's LAN IP ·
+    <code>example.com</code> is your domain ·
+    <code>/movies</code> is where your Plex container sees your movies.</p>
+  <p>Plex has no built-in way to message the people you share with. This app fakes one: it adds a short clip to your
+    Movies library dressed up as a notice, with your title, description and a big bold poster, and pins it to the front of
+    <strong>Recently Added</strong> so it's the first thing everyone sees.</p>
+  <ol>
+    <li><strong>Activate</strong>: the app copies your chosen clip into a dedicated folder inside your Movies library
+      (<code>_ServerNotice</code>), asks Plex to scan just that folder, then sets the title, description, poster and
+      background through the Plex API and locks them so Plex doesn't overwrite them.</li>
+    <li><strong>Pinning</strong>: Recently Added is sorted by "date added". The app sets the notice's date to the future
+      (2037 by default), so new downloads always land behind it. No constant re-shuffling is needed. A watchdog re-checks
+      it every few minutes anyway.</li>
+    <li><strong>Remove</strong>: the app deletes the item through Plex and removes the clip, so outside of active notices
+      nothing is left in your library. Each activation creates a brand-new item, so watched ticks never carry over.</li>
+    <li><strong>Status page (optional)</strong>: if you use the Cloudflare Worker from this guide, the app also sends a matching
+      message to it, which visitors see on e.g. <code>requests.example.com</code> if the server is offline.</li>
+  </ol>
+  <p class="note">Notices are delivered <em>by</em> Plex, so they're for advance warning (upgrades, electrical work, planned
+    downtime). If Plex is already down, nobody can see them. That's what the Cloudflare status page is for.</p>
+</section>
+
+<!-- ================================================================ -->
+<section id="requirements" class="card">
+  <h2>Before you start</h2>
+  <ul>
+    <li>Plex Media Server you own (admin token needed) with a <strong>Movies</strong> library.</li>
+    <li>Docker with Compose on a machine that can reach Plex over the network and can mount a folder inside your Movies folder.</li>
+    <li>To know which user/group owns your Movies folder: run <code>ls -ln /path/to/movies</code> on the host. The two
+      numbers after the permissions (e.g. <code>1000 100</code>) are the <code>PUID</code> and <code>PGID</code> this app
+      should use, normally the same as your Radarr and Plex containers.</li>
+    <li>Optional: a reverse proxy (e.g. Nginx Proxy Manager) for a nice address like <code>notices.example.com</code>.</li>
+    <li>Optional: a Cloudflare account with your domain on it, for the status page.</li>
+  </ul>
+</section>
+
+<!-- ================================================================ -->
+<section id="install" class="card">
+  <h2>Installing</h2>
+  <h3>1. Put the app's files on the server</h3>
+  <p>Copy the <code>plex-notice</code> folder into the folder that holds the compose file running Plex, so you end up with
+    <span class="path">/path/to/compose/plex-notice</span> next to <span class="path">/path/to/compose/compose.yml</span>.
+    It contains the <code>Dockerfile</code> and an <code>app</code> folder. (A separate compose file works too; see the note in step 3.)</p>
+
+  <h3>2. Folders and permissions</h3>
+  <p>Nothing to do by hand. Docker creates any missing host folders (as root) when the container starts, and the container then
+    hands them to your <code>PUID</code>:<code>PGID</code> before the app runs, the same way LinuxServer images (Radarr, Sonarr…) do it.
+    It only changes the owner of the data folder and of the <code>_ServerNotice</code> folder itself, never anything else in your
+    Movies library.</p>
+  <p><code>_ServerNotice</code> is where clips are copied while a notice is active; it's empty the rest of the time.
+    The leading underscore keeps it at the top of folder lists so it's obviously not a real movie. Radarr may list it under
+    <em>Library Import</em> as unrecognised; it won't touch it.</p>
+
+  <h3>3. Add the service to your compose file</h3>
+  <p>Add this under <code>services:</code> in the <code>compose.yml</code> that runs Plex. Change the four marked lines:</p>
+  <div class="code-wrap"><button class="btn btn-small copy" data-copy="#code-compose" type="button">Copy</button>
+<pre id="code-compose"><code>  plex-notice:
+    build: ./plex-notice
+    image: plex-notice:local
+    container_name: plex-notice
+    environment:
+      - PUID=1000                 # CHANGE: user ID that owns your movies folder
+      - PGID=1000                 # CHANGE: group ID that owns your movies folder
+      - TZ=Etc/UTC                # CHANGE: your time zone, e.g. Europe/London, America/New_York
+      # - MAX_UPLOAD_MB=1024      # biggest clip/image upload allowed
+      # - DISABLE_AUTH=true       # only to recover a forgotten password
+    volumes:
+      - ./plex-notice-data:/data                   # settings, presets, clips, images
+      - /path/to/movies/_ServerNotice:/notice      # CHANGE the left half only
+    ports:
+      - "{{ port }}:{{ port }}"
+    # networks:                   # optional: uncomment and use your Plex network's
+    #   - plex-network            # name if you want to reach Plex as http://plex:32400
+    restart: unless-stopped</code></pre></div>
+  <p>Don't add a <code>user:</code> line. <code>PUID</code>/<code>PGID</code> replace it, and a <code>user:</code> line would switch off the
+    automatic permission fixes. The right half of each volume (<code>/data</code>, <code>/notice</code>) must stay as it is. Only the left (host) side changes.
+    Using a separate compose file instead? That's fine, as long as the paths are right. The <code>networks:</code> lines only
+    matter for the container-name option.</p>
+
+  <h3>4. Build and start it</h3>
+  <div class="code-wrap"><button class="btn btn-small copy" data-copy="#code-up" type="button">Copy</button>
+<pre id="code-up"><code>cd /path/to/compose
+docker compose up -d --build plex-notice
+docker compose logs -f plex-notice      # Ctrl+C to stop watching</code></pre></div>
+  <p>Then open <code>http://192.168.1.10:{{ port }}</code> (your server's IP).</p>
+
+  <h3>5. Optional: a nice address in Nginx Proxy Manager (or another reverse proxy)</h3>
+  <ol>
+    <li>NPM → <strong>Hosts → Proxy Hosts → Add Proxy Host</strong>.</li>
+    <li><strong>Details</strong> tab: Domain <code>notices.example.com</code>, Scheme <code>http</code>, Forward Hostname/IP
+      <code>192.168.1.10</code>, Forward Port <code>{{ port }}</code>. Access List: one that only allows your LAN/VPN.
+      Tick <em>Block Common Exploits</em>.</li>
+    <li><strong>SSL</strong> tab: your certificate for that domain, tick <em>Force SSL</em> and <em>HTTP/2 Support</em>.</li>
+    <li>Save. Uploads of large clips can hit NPM's size limit. If an upload fails with "413", open the host again →
+      <strong>Advanced</strong> tab and add <code>client_max_body_size 1024m;</code>, then save.</li>
+  </ol>
+  <p>Direct access on <code>http://192.168.1.10:{{ port }}</code> keeps working alongside the proxy address.</p>
+</section>
+
+<!-- ================================================================ -->
+<section id="plex" class="card">
+  <h2>Plex setup</h2>
+  <h3>1. Allow media deletion (recommended)</h3>
+  <p>Plex Web → <strong>Settings</strong> (spanner, top right) → under your server, <strong>Library</strong> → tick
+    <strong>Allow media deletion</strong> → <strong>Save Changes</strong>.</p>
+  <p>This lets the app remove a notice cleanly with Plex's own delete, which only touches the notice item. Without it, a
+    removed notice is hidden from Recently Added (re-dated to 2000) but leaves an "unavailable" entry in the Movies
+    library until you allow deletion and press <em>Retry cleanup</em> on the Dashboard.</p>
+
+  <h3 id="plex-connect">2. Connect the app</h3>
+  <ol>
+    <li>Get your Plex token: open any movie in Plex Web → <strong>⋮ → Get Info → View XML</strong>, and copy everything after
+      <code>X-Plex-Token=</code> in the new tab's address bar.</li>
+    <li>In this app: <a href="/settings#plex">Settings → Plex connection</a>. Enter the Plex URL
+      (e.g. <code>http://192.168.1.10:32400</code>) and the token, then press <em>Test connection &amp; load libraries</em>.</li>
+    <li>Under <a href="/settings#library">Plex library &amp; folders</a>, pick your library. <em>Plex will look for notices in</em>
+      shows the path it worked out. With a standard setup there's nothing else to fill in: the notice folder's name is detected
+      from your compose file.</li>
+    <li>Save, then on the Dashboard press <strong>Run checks</strong>. Everything should be green (amber is a warning, not a blocker).</li>
+  </ol>
+</section>
+
+<!-- ================================================================ -->
+<section id="layouts" class="card">
+  <h2>Library in a different place</h2>
+  <p>The app works wherever your library lives. The only rule: the folder you mount at <code>/notice</code> must sit
+    <strong>directly inside</strong> one of the library's folders. The app then works out where Plex will find it:</p>
+  <p class="note"><strong>Plex looks in</strong> = the library's folder as Plex sees it + <code>/</code> + the notice folder's name.<br>
+    The name is detected from your compose line (the last part of the left-hand side), so normally you only pick the library.</p>
+  <h3>Examples</h3>
+  <div class="table-wrap">
+  <table class="list small">
+    <tr><th>Your setup</th><th>This app's compose line</th><th>Library folder (as Plex shows it)</th><th>Plex looks in</th></tr>
+    <tr><td>Plex in Docker, <code>/path/to/movies:/movies</code></td>
+        <td><code>/path/to/movies/_ServerNotice:/notice</code></td><td><code>/movies</code></td><td><code>/movies/_ServerNotice</code></td></tr>
+    <tr><td>Plex in Docker, one big media mount <code>/path/to/media:/data</code></td>
+        <td><code>/path/to/media/movies/_ServerNotice:/notice</code></td><td><code>/data/movies</code></td><td><code>/data/movies/_ServerNotice</code></td></tr>
+    <tr><td>Unraid</td>
+        <td><code>/mnt/user/media/movies/_ServerNotice:/notice</code></td><td>e.g. <code>/media/movies</code></td><td><code>/media/movies/_ServerNotice</code></td></tr>
+    <tr><td>Synology</td>
+        <td><code>/volume1/video/Movies/_ServerNotice:/notice</code></td><td>whatever Plex shows</td><td>that + <code>/_ServerNotice</code></td></tr>
+    <tr><td>Plex installed directly on the host (not Docker)</td>
+        <td><code>/path/to/movies/_ServerNotice:/notice</code></td><td><code>/path/to/movies</code></td><td><code>/path/to/movies/_ServerNotice</code></td></tr>
+    <tr><td>An Other Videos library, folder renamed</td>
+        <td><code>/path/to/videos/_Notices:/notice</code></td><td><code>/videos</code></td><td><code>/videos/_Notices</code></td></tr>
+  </table>
+  </div>
+  <p>To see the library's folders as Plex sees them: Settings → <em>Test connection</em> (they're listed next to each library), or
+    Plex Web → <strong>Settings → Manage → Libraries</strong> → hover the library → <strong>Edit</strong> → <strong>Add folders</strong>.</p>
+
+  <h3>Which libraries work?</h3>
+  <p><strong>Movies</strong> and <strong>Other Videos</strong> libraries. TV Shows and Music aren't supported: Plex needs a
+    show/season/episode or artist/album structure there, and Music would need an audio placeholder with square artwork.</p>
+
+  <h3>Library with several folders</h3>
+  <p>Mount the notice folder inside any one of them, ideally on a disk that's always on. The app asks Plex to check each of
+    the library's folders and uses whichever one has the clip.</p>
+
+  <h3>Notice folder deeper inside the library</h3>
+  <p>If it's not directly inside a library folder (e.g. <code>/movies/4K/_ServerNotice</code>), open
+    <a href="/settings#library">Settings → Advanced: custom Plex path</a> and type the full path Plex sees.</p>
+
+  <h3>Plex on a different machine</h3>
+  <p>This app writes the clip, and Plex has to read it. Run this app where the files physically live (e.g. on the NAS), or mount
+    the same network share on this app's machine and point <code>/notice</code> at the notice folder on that share. The Plex URL then
+    uses the other machine's IP.</p>
+
+  <h3>Detection says "couldn't detect"</h3>
+  <p>Some storage setups hide the folder name from the container. Type the name into <a href="/settings#library">Settings → Notice
+    folder name</a>, e.g. <code>_ServerNotice</code>.</p>
+
+  <h3>Why not mount the whole library and pick the folder in the app?</h3>
+  <p>Which host folders a container can touch is decided by Docker when it starts, not by the app inside it. Mounting only the notice
+    folder means the app physically can't write anywhere else, so a bug can never reach your real movies.</p>
+</section>
+
+<!-- ================================================================ -->
+<section id="using" class="card">
+  <h2>Day-to-day use</h2>
+  <h3>Media</h3>
+  <p>Upload one or more short clips on the <a href="/media">Media</a> page; that's what plays if someone presses Play. A default
+    5-second clip is included. Upload images there too if you want a photo behind the poster text or your own complete poster.</p>
+
+  <h3>Presets</h3>
+  <p>A preset is a saved notice: the title and description Plex shows, the poster design, the clip, and an optional
+    status-page message. Make one per kind of event ("Planned maintenance", "Electrical work", "Server upgrade") and
+    duplicate them to tweak dates. The preview shows exactly what Plex will get.</p>
+
+  <h3>Activating</h3>
+  <ol>
+    <li>Dashboard → <strong>Activate a notice</strong> → pick the preset.</li>
+    <li>Optionally set <strong>Remove automatically at</strong>, e.g. when the work should be finished.</li>
+    <li>If Cloudflare is set up, leave <strong>Also set this preset's message</strong> ticked so the status page shows your planned
+      message if the server goes down.</li>
+    <li>Press <strong>Activate</strong>. The progress list shows each step; it normally takes 10–30 seconds.</li>
+  </ol>
+  <p>The notice is also given the same future <em>release</em> date, so it leads "Recently Released Movies" too (Settings →
+    <em>Also put it first in "Recently Released"</em>). Some apps (especially TV apps) cache their Home screen for a few minutes. If the notice doesn't show straight away,
+    back out to Home or restart the app.</p>
+
+  <h3>Only one notice at a time</h3>
+  <p>Activating a different preset while one is live replaces it (the old one is removed first). Editing a live preset doesn't
+    change Plex until you activate it again.</p>
+
+  <h3>Removing</h3>
+  <p>Press <strong>Remove notice</strong>, or let the auto-remove time do it. If the server was off at that moment, it's removed
+    as soon as the app starts again. Removing also clears the planned status-page message, so the default one applies again.</p>
+
+  <h3>Watchdog</h3>
+  <p>Every few minutes (Settings → <em>Watchdog check interval</em>) the app checks the live notice still has its pinned date and
+    title, and quietly puts them back if something changed them. Problems show on the Dashboard under <em>Last check</em>.</p>
+
+  <h3>Before you shut the server down</h3>
+  <ol>
+    <li>Activate the notice a day or two ahead so people see it.</li>
+    <li>Optionally set an auto-remove time for after the work.</li>
+    <li>Shut down as normal. If you used the status page, it shows the planned message while you're offline.</li>
+    <li>When everything's back, the notice is removed automatically, or remove it yourself.</li>
+  </ol>
+</section>
+
+<!-- ================================================================ -->
+<section id="cloudflare" class="card">
+  <h2>Cloudflare status page</h2>
+  <p>Optional, but it covers the gap Plex can't: when your server is <em>off</em>. A Cloudflare Worker sits in front of a website
+    you already expose through Cloudflare (e.g. <code>requests.example.com</code> running Seerr, the request app for Plex and Jellyfin).
+    Visitors pass straight through to your server; if it can't be reached, the Worker shows a maintenance page instead. That page's
+    text comes from Workers KV, which this app writes to.</p>
+  <ul>
+    <li>Everything below fits in Cloudflare's free plan.</li>
+    <li>The Worker only reads KV when your server is down, so normal browsing doesn't use KV at all.</li>
+    <li>"Account level" means outside any one domain: click the Cloudflare logo or your account name at the top left.</li>
+    <li>Cloudflare reshuffles its dashboard now and then. If a name below doesn't match, look for the closest equivalent.</li>
+  </ul>
+
+  <h3 id="cf-kv">Step 1: Create a KV namespace</h3>
+  <ol>
+    <li>Account level → sidebar <strong>Storage &amp; Databases → Workers KV</strong> → <strong>Create a KV namespace</strong>.</li>
+    <li>Name it <code>plex-notices</code> and create it.</li>
+    <li>Cloudflare opens its <strong>KV Pairs</strong> page (with an <em>Add Entry</em> button). You don't need to add anything; the app does that.</li>
+    <li>Click the <strong>Metrics</strong> tab and copy the <strong>Namespace ID</strong> from the box on the right.
+      It goes into <a href="/settings#cloudflare">Settings → Cloudflare → KV namespace ID</a>.</li>
+  </ol>
+
+  <h3 id="cf-token">Step 2: Create an API token for this app</h3>
+  <ol>
+    <li>Person icon (top right) → <strong>Profile</strong> → <strong>API Tokens</strong> (left sidebar) → <strong>Create Token</strong>.</li>
+    <li>Under <strong>Create Custom Token</strong>, press <strong>Get started</strong>.</li>
+    <li>Token name: <code>plex-notice KV</code>.</li>
+    <li>Permissions: one row with the three drop-downs set to <strong>Account</strong>, <strong>Workers KV Storage</strong> and
+      <strong>Edit</strong>. Nothing else.</li>
+    <li>Account Resources: <strong>Include</strong> and your account.</li>
+    <li><strong>Continue to summary → Create Token</strong>. Copy the token now; Cloudflare only shows it once. It goes into
+      <a href="/settings#cloudflare">Settings → Cloudflare → API token</a>.</li>
+  </ol>
+  <p id="cf-account">Your <strong>Account ID</strong> is the long string in the dashboard's address bar right after
+    <code>dash.cloudflare.com/</code>.</p>
+
+  <h3>Step 3: Create (or update) the Worker</h3>
+  <ol>
+    <li>Account level → <strong>Compute → Workers &amp; Pages</strong> → <strong>Create application</strong>.</li>
+    <li>Start with the <strong>Hello World</strong> option → name it <code>requests-fallback</code> → <strong>Deploy</strong> →
+      <strong>Edit code</strong>.<br>
+      <strong>Already have it?</strong> Open <code>requests-fallback</code> → <strong>Edit code</strong> instead.</li>
+    <li>Select everything in the editor, delete it, paste the code below, then <strong>Deploy</strong>.</li>
+  </ol>
+  <div class="code-wrap"><button class="btn btn-small copy" data-copy="#code-worker" type="button">Copy</button>
+<pre id="code-worker" style="max-height:420px"><code>{{ worker_code }}</code></pre></div>
+  <p class="small muted">Also downloadable: <a href="/guide/worker.js">requests-fallback.js</a>. Edit <code>FALLBACK</code> at the top if
+    you want different built-in text. It's only used if KV is empty or unreachable.</p>
+
+  <h3>Step 4: Connect the Worker to KV</h3>
+  <ol>
+    <li>Open the <code>requests-fallback</code> Worker → <strong>Settings</strong> tab → <strong>Bindings</strong> →
+      <strong>+ Add binding</strong>.</li>
+    <li>Choose <strong>KV namespace</strong> → <strong>Add Binding</strong>.</li>
+    <li>Variable name: <code>NOTICES</code> (exactly, in capitals). KV namespace: <code>plex-notices</code>.</li>
+    <li><strong>Add Binding</strong>.</li>
+  </ol>
+  <p class="note">If the binding is missing or misnamed the Worker still works, but always shows its built-in text instead of
+    your messages.</p>
+
+  <h3>Step 5: Optional manual switch</h3>
+  <ol>
+    <li>Open the <code>requests-fallback</code> Worker → <strong>Settings</strong> tab → <strong>Runtime variables and secrets</strong>
+      → <strong>+ Add variable</strong>.</li>
+    <li>Key: <code>FORCE_MAINTENANCE</code>, Value: <code>false</code> → <strong>Add variable and deploy</strong>.</li>
+  </ol>
+  <p>Set it to <code>true</code> to show the maintenance page even while the server is up, and back to <code>false</code> afterwards.</p>
+
+  <h3>Step 6: Proxy the site through Cloudflare</h3>
+  <ol>
+    <li>Your domain → <strong>SSL/TLS → Overview</strong> → the blue <strong>⚙ Configure</strong> button (top right) → choose
+      <strong>Full (strict)</strong> and save. With <em>Flexible</em>, a reverse proxy that forces HTTPS causes an endless redirect loop.</li>
+    <li>Your domain → <strong>DNS → Records</strong>: the site's record (e.g. <code>requests</code>) must have Proxy status
+      <strong>Proxied</strong> (orange cloud). Edit it if it's grey. If the site is only covered by a <code>*</code> wildcard record,
+      add an explicit one with <strong>Add record</strong>: same Type as the wildcard (A or CNAME), Name <code>requests</code>,
+      Content exactly what the wildcard points to, <strong>Proxied</strong> → <strong>Save</strong>. An explicit record overrides the
+      wildcard for that name only.</li>
+  </ol>
+
+  <h3>Step 7: Attach the Worker to the site</h3>
+  <ol>
+    <li>Your domain → sidebar <strong>Workers Routes → Add route</strong>.</li>
+    <li>Route: <code>requests.example.com/*</code> (your site, with <code>/*</code> on the end). Worker: <code>requests-fallback</code>.</li>
+    <li>Request limit failure mode: <strong>Fail open (proceed)</strong>. If you ever pass the free daily limit, visitors just
+      go straight to your server.</li>
+    <li><strong>Save</strong>.</li>
+  </ol>
+  <p class="note">Use a <strong>Route</strong>, not a <em>Custom Domain</em>. A custom domain would make the Worker the entire site;
+    a route puts it <em>in front of</em> your server. Leave the Worker's <code>workers.dev</code> address switched on. It's
+    harmless, and turning it off isn't needed.</p>
+
+  <h3>Step 8: Connect this app</h3>
+  <ol>
+    <li><a href="/settings#cloudflare">Settings → Cloudflare status page</a>: tick <em>Enable</em>, fill in Account ID, KV
+      namespace ID and API token.</li>
+    <li>Press <strong>Test Cloudflare</strong>; it should say <em>Connected</em>.</li>
+    <li>Check the default heading and message, then <strong>Save settings</strong> (this sends the default message to KV).</li>
+    <li>In each preset, fill in the <em>Status page</em> heading and message you want during that kind of planned outage.</li>
+  </ol>
+
+  <h3 id="cf-lan">On your own network</h3>
+  <p>If your local DNS (AdGuard Home, Pi-hole, your router) points the site straight at your reverse proxy, devices at home never
+    touch Cloudflare, so they get the proxy's plain "502 Bad Gateway" instead of the maintenance page. To make home devices go
+    through Cloudflare for this one site too, stop overriding that one name locally:</p>
+  <ul>
+    <li><strong>AdGuard Home with a wildcard rewrite</strong> (e.g. <code>*.example.com</code> → your server): Filters →
+      <strong>DNS rewrites</strong> → <strong>Add DNS rewrite</strong>: domain <code>requests.example.com</code>, answer
+      <code>A</code> (just the letter). That's AdGuard Home's way of saying "use the real public answer for this name", an exception
+      to the wildcard. Check the docs for your version if it doesn't take.</li>
+    <li><strong>A single rewrite for that name:</strong> delete it.</li>
+  </ul>
+  <p>Check it worked: on a home device, <code>nslookup requests.example.com</code> should return Cloudflare addresses (often
+    starting <code>104.</code> or <code>172.6</code>), not your server's LAN IP. Trade-offs: home traffic to that site now goes out
+    via the internet and back, and it won't load at home if your internet is down.</p>
+
+  <h3 id="cf-debug">Troubleshooting addresses</h3>
+  <p>The Worker answers two special addresses on your site, even while the server is up:</p>
+  <ul>
+    <li><code>https://requests.example.com/__plex-notice/status</code> shows what the Worker can see: whether the KV binding works,
+      the stored <code>planned</code> and <code>default</code> messages, and which one the page would show right now.</li>
+    <li><code>https://requests.example.com/__plex-notice/preview</code> shows the maintenance page as visitors would see it right now,
+      without having to stop anything.</li>
+  </ul>
+  <p>Like the real page, these only work through Cloudflare (mobile data, or after the DNS change above).</p>
+
+  <h3>Side effects worth knowing</h3>
+  <ul>
+    <li>Your reverse proxy now sees Cloudflare's IP addresses for this host instead of visitors' real IPs. Fine for a public
+      site like a request page, but don't put an IP-based access list on it.</li>
+    <li>If your reverse proxy renews certificates with an HTTP challenge, check renewals still work once the site is proxied.
+      Certificates issued by DNS challenge (e.g. wildcards) aren't affected.</li>
+    <li>Devices using your own DNS (LAN or VPN) may go straight to your server and skip Cloudflare entirely. That's normal, and
+      it's why testing must be done from outside (below).</li>
+  </ul>
+</section>
+
+<!-- ================================================================ -->
+<section id="cf-test" class="card">
+  <h2>Testing the status page</h2>
+  <p>Test from <strong>outside your network</strong>: a phone on mobile data with <strong>WireGuard/VPN turned off</strong>.
+    On Wi-Fi or VPN your own DNS may route you around Cloudflare and you'll never see the Worker. Don't test with the
+    <code>workers.dev</code> address either; it can only show Cloudflare's "nothing here yet" page.</p>
+  <ol>
+    <li><strong>Normal:</strong> open your site, e.g. <code>https://requests.example.com</code>. It loads as usual.</li>
+    <li><strong>Unexpected outage:</strong> stop the site's container (e.g. <code>docker stop seerr</code>, or stop it in your Docker UI).
+      Reload: you should see the red <em>Server offline</em> page with your <strong>default</strong> message.</li>
+    <li><strong>Planned outage:</strong> on the Dashboard, activate a preset that has a status message, with
+      <em>Also set this preset's message</em> ticked. Wait about a minute (KV changes take up to ~60s to reach every
+      Cloudflare location), then reload: the amber <em>Planned maintenance</em> page with that preset's message. If you set an
+      auto-remove time it shows "Expected back".</li>
+    <li><strong>Clean up:</strong> remove the notice (the planned message is cleared), then start the container again
+      (<code>docker start seerr</code>). Reload: the site is back.</li>
+    <li><strong>Whole house off (optional):</strong> briefly unplug the router's WAN cable and reload from mobile data. You should get the
+      same maintenance page, maybe after up to 10 seconds while the Worker waits for your server.</li>
+  </ol>
+</section>
+
+<!-- ================================================================ -->
+<section id="troubleshooting" class="card">
+  <h2>Troubleshooting</h2>
+  <h3>"Plex didn't add the clip within …s"</h3>
+  <p>The folder mounted at <code>/notice</code> isn't where the app told Plex to look. Compare the compose line with
+    <a href="/settings#library">Settings → Plex will look for notices in</a>: the notice folder must sit directly inside the library's
+    folder, and its name must match (see <a href="#layouts">Library in a different place</a>). If your disks spin down, also try a
+    longer <em>Scan timeout</em>.</p>
+  <h3>"Can't write to the notice folder" or "Permission denied: '/data/…'"</h3>
+  <p>Check the container log (<code>docker compose logs plex-notice</code>): the <code>[init]</code> lines at the top show which
+    PUID/PGID it used and whether it could fix the folder owners. Usual causes: a <code>user:</code> line in compose (remove it and
+    use PUID/PGID), or a network share that doesn't allow changing owners (root squash). In that case set the owner on the host or
+    NAS yourself, e.g. <code>chown -R 1000:100 /path/to/compose/plex-notice-data</code>.</p>
+  <h3>"The notice folder /notice is gone inside the container"</h3>
+  <p>The notice folder was deleted on the host while the app was running, typically by Plex tidying up empty folders after
+    deleting a notice. The app now keeps a hidden <code>.plex-notice-keep</code> file in it so it's never empty; leave that file
+    there. To recover, from the folder with your compose file run <code>docker compose up -d --force-recreate plex-notice</code>.
+    Docker recreates the folder and the app fixes its owner.</p>
+  <h3>Notice isn't first on my TV</h3>
+  <p>TV apps cache their Home screen. Back out to Home or restart the app. Also check the Dashboard's <em>Last check</em> line.</p>
+  <h3>"Unavailable" leftover in the Movies library</h3>
+  <p>Plex refused to delete an old notice, so <em>Allow media deletion</em> is off. Turn it on (Plex Setup above) and press
+    <em>Retry cleanup</em> on the Dashboard.</p>
+  <h3>Poster or title reverted</h3>
+  <p>Someone ran "Refresh metadata" or "Fix match" on it. The watchdog puts title and date back within the check interval;
+    activate again to restore everything, including the poster.</p>
+  <h3>Status page shows the built-in text, not mine</h3>
+  <p>Open <code>https://your-site/__plex-notice/status</code> from mobile data first. It says exactly what the Worker sees (see
+    <a href="#cf-debug">Troubleshooting addresses</a>). Otherwise, check the Worker's KV binding is called exactly <code>NOTICES</code>, that <em>Test Cloudflare</em> passes, and that you saved
+    settings (which sends the default). Changes can take ~60 seconds to appear.</p>
+  <h3>Upload fails</h3>
+  <p>"413" means NPM's upload limit (see Installing, step 5). Otherwise check the file is under <code>MAX_UPLOAD_MB</code> and has
+    an accepted extension.</p>
+  <h3>Something else</h3>
+  <p>Look at the Activity list on the Dashboard and <code>docker compose logs plex-notice</code>. Each step is logged.</p>
+</section>
+
+<!-- ================================================================ -->
+<section id="security" class="card">
+  <h2>Security</h2>
+  <ul>
+    <li>Anyone who can open this app can post a notice to all your Plex users. Keep it LAN/VPN-only (NPM local-only access list),
+      and/or turn on a password in <a href="/settings#security">Settings → Security</a>.</li>
+    <li>The Plex token and Cloudflare token are stored in plain text in <code>/data/settings.json</code>. Keep the
+      <code>plex-notice-data</code> folder private and out of public backups/shares.</li>
+    <li>The Cloudflare token only needs <em>Workers KV Storage → Edit</em>; it can't change DNS or anything else.</li>
+    <li>The container only gets write access to the <code>_ServerNotice</code> sub-folder, never your whole Movies library, and it
+      only ever deletes folders it created (named <code>notice-YYYYMMDD-HHMMSS</code>).</li>
+    <li>Forgot the password? Add <code>DISABLE_AUTH=true</code> to the app's environment, <code>docker compose up -d</code>, set a
+      new password, remove the line, and <code>docker compose up -d</code> again.</li>
+  </ul>
+</section>
+
+<!-- ================================================================ -->
+<section id="updating" class="card">
+  <h2>Updating</h2>
+  <p>Replace the files in the <code>plex-notice</code> folder with the new version (keep <code>plex-notice-data</code>, which holds
+    your settings, presets and media), then:</p>
+  <div class="code-wrap"><button class="btn btn-small copy" data-copy="#code-update" type="button">Copy</button>
+<pre id="code-update"><code>cd /path/to/compose
+docker compose up -d --build plex-notice</code></pre></div>
+  <p>If you later publish the app on GitHub with a container image (e.g. on ghcr.io), swap <code>build: ./plex-notice</code> for
+    <code>image: ghcr.io/&lt;you&gt;/plex-notice:latest</code> and update with <code>docker compose pull plex-notice &amp;&amp; docker compose up -d plex-notice</code>,
+    or with your Docker UI's update button.</p>
+</section>
+
+<!-- ================================================================ -->
+<section id="reference" class="card">
+  <h2>Reference</h2>
+  <h3>Environment variables</h3>
+  <table class="list small">
+    <tr><th>Variable</th><th>Default</th><th>What it does</th></tr>
+    <tr><td><code>PUID</code></td><td>1000</td><td>User ID the app runs as. Match the owner of your movies folder (<code>ls -ln</code>).</td></tr>
+    <tr><td><code>PGID</code></td><td>1000</td><td>Group ID the app runs as. Clips it writes are group-readable, so Plex in the same group can read them.</td></tr>
+    <tr><td><code>TZ</code></td><td>UTC</td><td>Time zone for auto-remove times and displayed dates. Set it, e.g. <code>Europe/London</code>.</td></tr>
+    <tr><td><code>PORT</code></td><td>{{ port }}</td><td>Port the web UI listens on inside the container (change the compose <code>ports:</code> line to match).</td></tr>
+    <tr><td><code>MAX_UPLOAD_MB</code></td><td>1024</td><td>Largest clip or image you can upload.</td></tr>
+    <tr><td><code>DISABLE_AUTH</code></td><td>off</td><td><code>true</code> bypasses the password (recovery only).</td></tr>
+    <tr><td><code>DATA_DIR</code></td><td>/data</td><td>Where settings, presets and media live. Normally leave it.</td></tr>
+    <tr><td><code>NOTICE_DIR</code></td><td>/notice</td><td>Where clips are copied while a notice is live. Normally leave it.</td></tr>
+  </table>
+  <h3>Volumes</h3>
+  <table class="list small">
+    <tr><th>In container</th><th>Example on host</th><th>Purpose</th></tr>
+    <tr><td><code>/data</code></td><td><code>./plex-notice-data</code></td><td>Settings, presets, uploaded clips/images, logs. Back this up.</td></tr>
+    <tr><td><code>/notice</code></td><td><code>/path/to/movies/_ServerNotice</code></td><td>Empty except while a notice is live.</td></tr>
+  </table>
+  <h3>Files in /data</h3>
+  <table class="list small">
+    <tr><td><code>settings.json</code></td><td>All settings including tokens and the password hash.</td></tr>
+    <tr><td><code>presets.json</code></td><td>Your presets.</td></tr>
+    <tr><td><code>media.json</code>, <code>clips/</code>, <code>images/</code></td><td>Uploaded media and its index.</td></tr>
+    <tr><td><code>state.json</code></td><td>What's live right now, last job, activity log.</td></tr>
+    <tr><td><code>secret.key</code></td><td>Signs login cookies. Deleting it logs everyone out.</td></tr>
+  </table>
+  <h3>KV keys the Worker reads</h3>
+  <table class="list small">
+    <tr><td><code>planned</code></td><td>Set while a notice is active (if chosen). Expires automatically; cleared on removal.</td></tr>
+    <tr><td><code>default</code></td><td>Your "unexpected outage" message, sent when you save settings.</td></tr>
+  </table>
+</section>
+</div>
+</div>
+{% endblock %}

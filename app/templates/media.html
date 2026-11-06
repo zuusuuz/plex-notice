@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+{% block title %}Media{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Media</h1>
+    <p>Placeholder clips and images, stored in this app's data folder. Presets pick from these.</p>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-head"><h2>Placeholder clips</h2></div>
+  <form method="post" action="/media/upload" enctype="multipart/form-data" class="row" style="margin-bottom:8px">
+    <input type="hidden" name="kind" value="clip">
+    <div class="grow"><input type="file" name="file" accept="{{ clip_accept }}" required></div>
+    <div class="grow"><input type="text" name="name" placeholder="Name (optional, e.g. Look at my horse)" maxlength="80"></div>
+    <button class="btn btn-primary">Upload clip</button>
+  </form>
+  <p class="help">This is what plays when someone presses Play on a notice. Accepted: {{ clip_exts }}. Max {{ max_mb }} MB
+    (change with <code>MAX_UPLOAD_MB</code> in the compose file). Keep clips short; they're copied into your Movies folder each
+    time a notice is activated. Plex plays mp4 (H.264/AAC) directly on almost everything; other formats may be transcoded,
+    which is fine.</p>
+  <details class="more"><summary>Where are these stored, and what happens when I delete one?</summary><div>
+    Clips live in <code>/data/clips</code> inside the container (your <code>plex-notice-data</code> folder on the host), not in
+    your Movies library, so Plex never sees them until a notice is activated. A clip used by a preset can't be deleted until you
+    change that preset. Deleting a clip doesn't affect a notice that's already live, because that notice uses its own copy.
+  </div></details>
+  {% if clips %}
+  <div class="table-wrap" style="margin-top:12px">
+  <table class="list">
+    <tr><th>Preview</th><th>Name</th><th>Size</th><th>Used by</th><th></th></tr>
+    {% for c in clips %}
+    <tr>
+      <td>{% if c.playable %}<video class="clip" src="/media/clip/{{ c.id }}/file" controls preload="metadata"></video>{% else %}<span class="faint small">{{ c.ext }} (no browser preview)</span>{% endif %}</td>
+      <td><strong>{{ c.name }}</strong><br><span class="faint small">{{ c.original }}</span></td>
+      <td>{{ c.size|filesize }}</td>
+      <td class="small">{{ c.used_by|join(", ") if c.used_by else "—" }}</td>
+      <td>
+        <form method="post" action="/media/clip/{{ c.id }}/delete" class="inline" data-confirm="Delete clip '{{ c.name }}'?">
+          <button class="btn btn-small btn-danger" {{ 'disabled title="Used by a preset"' if c.used_by }}>Delete</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+  </div>
+  {% else %}
+  <p class="muted">No clips yet.</p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <div class="card-head"><h2>Images</h2></div>
+  <form method="post" action="/media/upload" enctype="multipart/form-data" class="row" style="margin-bottom:8px">
+    <input type="hidden" name="kind" value="image">
+    <div class="grow"><input type="file" name="file" accept="{{ image_accept }}" required></div>
+    <div class="grow"><input type="text" name="name" placeholder="Name (optional)" maxlength="80"></div>
+    <button class="btn btn-primary">Upload image</button>
+  </form>
+  <p class="help">Use an image either as a <strong>background photo</strong> behind generated text, or as a complete
+    <strong>poster</strong> of your own (choose this in the preset). Accepted: {{ image_exts }}. For full posters, 1000×1500 (2:3) looks best.</p>
+  {% if images %}
+  <div class="table-wrap" style="margin-top:12px">
+  <table class="list">
+    <tr><th>Preview</th><th>Name</th><th>Size</th><th>Used by</th><th></th></tr>
+    {% for i in images %}
+    <tr>
+      <td><a href="/media/image/{{ i.id }}/file" target="_blank"><img class="thumb" src="/media/image/{{ i.id }}/file" alt=""></a></td>
+      <td><strong>{{ i.name }}</strong><br><span class="faint small">{{ i.width }}×{{ i.height }}</span></td>
+      <td>{{ i.size|filesize }}</td>
+      <td class="small">{{ i.used_by|join(", ") if i.used_by else "—" }}</td>
+      <td>
+        <form method="post" action="/media/image/{{ i.id }}/delete" class="inline" data-confirm="Delete image '{{ i.name }}'?">
+          <button class="btn btn-small btn-danger" {{ 'disabled title="Used by a preset"' if i.used_by }}>Delete</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+  </div>
+  {% else %}
+  <p class="muted">No images yet.</p>
+  {% endif %}
+</div>
+{% endblock %}

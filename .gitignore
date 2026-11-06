@@ -1,0 +1,18 @@
+# Runtime data - contains your Plex/Cloudflare tokens. Never commit it.
+plex-notice-data/
+data/
+*.json.tmp
+*.json.corrupt
+secret.key
+.env
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store

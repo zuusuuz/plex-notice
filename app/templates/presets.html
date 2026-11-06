@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}Presets{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Presets</h1>
+    <p>Saved notices you can switch on from the Dashboard. Each one has its own text, poster, clip and status-page message.</p>
+  </div>
+  <a class="btn btn-primary" href="/presets/new">+ New preset</a>
+</div>
+
+{% if presets %}
+<div class="tiles">
+  {% for p in presets %}
+  <div class="tile">
+    <img src="/presets/{{ p.id }}/poster.jpg?v={{ p.updated|int }}" alt="" loading="lazy">
+    <div class="body">
+      <div class="name">{{ p.name }}</div>
+      <div class="muted small">{{ p.title }}</div>
+      {% if not p.clip_ok %}<div class="small" style="color:var(--warn)">No clip selected</div>{% endif %}
+      {% if active_id == p.id %}<div><span class="pill pill-live">Live now</span></div>{% endif %}
+      <div class="actions">
+        <a class="btn btn-small" href="/presets/{{ p.id }}/edit">Edit</a>
+        <form method="post" action="/presets/{{ p.id }}/duplicate" class="inline"><button class="btn btn-small">Duplicate</button></form>
+        <form method="post" action="/presets/{{ p.id }}/delete" class="inline" data-confirm="Delete preset '{{ p.name }}'?">
+          <button class="btn btn-small btn-danger">Delete</button>
+        </form>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="card"><p class="muted">No presets yet. <a href="/presets/new">Create your first one.</a></p></div>
+{% endif %}
+
+<div class="card" style="margin-top:18px">
+  <h2>Tips</h2>
+  <ul class="muted small" style="margin:0;padding-left:20px">
+    <li>Editing a preset that's live doesn't change Plex straight away. Activate it again from the Dashboard to apply changes.</li>
+    <li>Duplicate a preset to make a quick variation (e.g. a different date) without retyping everything.</li>
+    <li>Clips and images live on the <a href="/media">Media</a> page and can be shared between presets.</li>
+  </ul>
+</div>
+{% endblock %}

@@ -1,0 +1,33 @@
+# Add the "plex-notice" service below to the compose file that runs Plex, under "services:".
+# This file is only an example; it is not meant to be run on its own.
+#
+# Replace the placeholders:
+#   /path/to/movies   your Movies folder on the host
+#   PUID / PGID       the user and group IDs that own it   (check with: ls -ln /path/to/movies)
+#   Etc/UTC           your time zone, e.g. Europe/London, America/New_York, Australia/Sydney
+
+services:
+  plex-notice:
+    build: ./plex-notice            # folder containing this app's Dockerfile
+    image: plex-notice:local
+    container_name: plex-notice
+    # No "user:" line: the container starts as root, fixes folder ownership, then runs as PUID:PGID
+    environment:
+      - PUID=1000                   # CHANGE: user ID that owns your movies folder
+      - PGID=1000                   # CHANGE: group ID that owns your movies folder
+      - TZ=Etc/UTC                  # CHANGE: your time zone
+      # - MAX_UPLOAD_MB=1024        # biggest clip/image upload allowed
+      # - DISABLE_AUTH=true         # only to recover a forgotten password
+    volumes:
+      - ./plex-notice-data:/data                   # settings, presets, clips, images
+      - /path/to/movies/_ServerNotice:/notice      # CHANGE the left half: a sub-folder INSIDE your Movies library
+    ports:
+      - "8742:8742"
+    # networks:                     # optional: put it on the same Docker network as Plex
+    #   - plex-network              # so http://plex:32400 also works (use your network's name)
+    restart: unless-stopped
+
+# Only needed if you uncommented "networks:" above and the network is defined elsewhere:
+# networks:
+#   plex-network:
+#     external: true
