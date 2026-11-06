@@ -10,6 +10,13 @@ it off and it's gone without a trace.
 It also pairs with an optional **Cloudflare Worker status page**, so if your server is offline, visitors to a site
 like `requests.example.com` see a proper maintenance message instead of a browser error.
 
+> [!IMPORTANT]
+> ## 🤖 Built with AI
+> **This project was written with [Claude Opus 5.5](https://www.anthropic.com/claude), Anthropic's AI model.**
+> The code, the in-app guide, the Cloudflare Worker and this README were written by Claude, working with Erik, who came up
+> with the idea, made the design decisions, and tested every feature on a real Plex server.
+> It works well in that setup, but as with any project, read the code and test it on your own server before relying on it.
+
 <p align="center">
   <img src="docs/screenshots/plex-home-rows.png" alt="A notice pinned to the front of Recently Released and Recently Added in Plex" width="260">
   &nbsp;&nbsp;
