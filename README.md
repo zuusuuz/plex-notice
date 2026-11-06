@@ -153,7 +153,7 @@ Put this project in a folder called `plex-notice` inside `/path/to/compose`:
 
 ```bash
 cd /path/to/compose
-git clone https://github.com/<your-github-name>/plex-notice.git
+git clone https://github.com/zuusuuz/plex-notice.git
 ```
 
 (Or download the ZIP from GitHub and unpack it there.)
